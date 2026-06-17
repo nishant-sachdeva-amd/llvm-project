@@ -314,6 +314,17 @@ public:
 
 FunctionPass *createX86CompressEVEXLegacyPass();
 
+/// This pass promotes VEX vector memory moves to their EVEX equivalent when the
+/// compressed disp8*N form makes the encoding strictly smaller (znver5, opt-in).
+class X86PromoteEVEXForSizePass
+    : public OptionalPassInfoMixin<X86PromoteEVEXForSizePass> {
+public:
+  PreservedAnalyses run(MachineFunction &MF,
+                        MachineFunctionAnalysisManager &MFAM);
+};
+
+FunctionPass *createX86PromoteEVEXForSizeLegacyPass();
+
 /// This pass creates the thunks for the retpoline feature.
 FunctionPass *createX86IndirectThunksPass();
 
@@ -471,6 +482,7 @@ public:
 FunctionPass *createX86ArgumentStackSlotLegacyPass();
 
 void initializeCompressEVEXLegacyPass(PassRegistry &);
+void initializeX86PromoteEVEXForSizeLegacyPass(PassRegistry &);
 void initializeX86FixupBWInstLegacyPass(PassRegistry &);
 void initializeFixupLEAsLegacyPass(PassRegistry &);
 void initializeX86ArgumentStackSlotLegacyPass(PassRegistry &);

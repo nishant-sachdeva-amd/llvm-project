@@ -641,6 +641,11 @@ def TuningFastImmVectorShift : SubtargetFeature<"tuning-fast-imm-vector-shift",
                                    "FastImmVectorShift", "true",
                                    "Vector shifts are fast (2/cycle) as opposed to slow (1/cycle)">;
 
+def TuningPreferEVEXForSize : SubtargetFeature<"prefer-evex-for-size",
+                                   "PreferEVEXForSize", "true",
+                                   "Promote VEX vector memory moves to EVEX when the "
+                                   "compressed disp8*N form makes the encoding smaller">;
+
 // On some X86 processors, a vzeroupper instruction should be inserted after
 // using ymm/zmm registers before executing code that may use SSE instructions.
 def TuningInsertVZEROUPPER
@@ -1654,7 +1659,8 @@ def ProcessorFeatures {
   list<SubtargetFeature> ZN4Features =
     !listconcat(ZN3Features, ZN4AdditionalFeatures);
 
-  list<SubtargetFeature> ZN5AdditionalTuning = [TuningSlowIndirectCall];
+  list<SubtargetFeature> ZN5AdditionalTuning =
+    [TuningSlowIndirectCall, TuningPreferEVEXForSize];
   list<SubtargetFeature> ZN5Tuning =
     !listconcat(ZN4Tuning, ZN5AdditionalTuning);
   list<SubtargetFeature> ZN5AdditionalFeatures = [FeatureMOVDIRI,

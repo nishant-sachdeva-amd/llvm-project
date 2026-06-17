@@ -2300,6 +2300,8 @@ void X86AsmPrinter::emitInstruction(const MachineInstr *MI) {
       OutStreamer->AddComment("EVEX TO VEX Compression ", false);
     else if (MI->getAsmPrinterFlags() & X86::AC_EVEX_2_EVEX)
       OutStreamer->AddComment("EVEX TO EVEX Compression ", false);
+    else if (MI->getAsmPrinterFlags() & X86::AC_VEX_2_EVEX)
+      OutStreamer->AddComment("VEX TO EVEX Promotion ", false);
   }
 
   // We use this to suppress NOP padding for Windows EH.

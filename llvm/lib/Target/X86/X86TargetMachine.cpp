@@ -76,6 +76,7 @@ extern "C" LLVM_C_ABI void LLVMInitializeX86Target() {
   initializeWinEHStateLegacyPass(PR);
   initializeX86FixupBWInstLegacyPass(PR);
   initializeCompressEVEXLegacyPass(PR);
+  initializeX86PromoteEVEXForSizeLegacyPass(PR);
   initializeFixupLEAsLegacyPass(PR);
   initializeX86FPStackifierLegacyPass(PR);
   initializeX86FixupSetCCLegacyPass(PR);
@@ -572,6 +573,10 @@ void X86PassConfig::addPreEmitPass() {
     addPass(createX86FixupVectorConstantsLegacyPass());
   }
   addPass(createX86CompressEVEXLegacyPass());
+  // Runs after CompressEVEX (which only shrinks EVEX->VEX) so the inverse
+  // VEX->EVEX size promotion can never oscillate with it. Off by default;
+  // gated on the TuningPreferEVEXForSize subtarget feature.
+  addPass(createX86PromoteEVEXForSizeLegacyPass());
   addPass(createX86InsertX87WaitLegacyPass());
 }
 
