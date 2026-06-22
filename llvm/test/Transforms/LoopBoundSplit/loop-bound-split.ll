@@ -954,4 +954,234 @@ exit:
   ret void
 }
 
+; Decline: the function is marked optsize, so canSplitLoopBound bails before
+; doing any work (it refuses to duplicate the loop body for code size).
+define void @no_split_optsize(ptr noalias %src, ptr noalias %dst, i64 %n) #0 {
+; CHECK-LABEL: @no_split_optsize(
+; CHECK-NEXT:  loop.ph:
+; CHECK-NEXT:    br label [[LOOP:%.*]]
+; CHECK:       loop:
+; CHECK-NEXT:    [[IV:%.*]] = phi i64 [ [[INC:%.*]], [[FOR_INC:%.*]] ], [ 0, [[LOOP_PH:%.*]] ]
+; CHECK-NEXT:    [[CMP:%.*]] = icmp ult i64 [[IV]], 10
+; CHECK-NEXT:    br i1 [[CMP]], label [[IF_THEN:%.*]], label [[IF_ELSE:%.*]]
+; CHECK:       if.then:
+; CHECK-NEXT:    [[SRC_ARRAYIDX:%.*]] = getelementptr inbounds i64, ptr [[SRC:%.*]], i64 [[IV]]
+; CHECK-NEXT:    [[VAL:%.*]] = load i64, ptr [[SRC_ARRAYIDX]], align 4
+; CHECK-NEXT:    [[DST_ARRAYIDX:%.*]] = getelementptr inbounds i64, ptr [[DST:%.*]], i64 [[IV]]
+; CHECK-NEXT:    store i64 [[VAL]], ptr [[DST_ARRAYIDX]], align 4
+; CHECK-NEXT:    br label [[FOR_INC]]
+; CHECK:       if.else:
+; CHECK-NEXT:    br label [[FOR_INC]]
+; CHECK:       for.inc:
+; CHECK-NEXT:    [[INC]] = add nuw nsw i64 [[IV]], 1
+; CHECK-NEXT:    [[COND:%.*]] = icmp sgt i64 [[INC]], [[N:%.*]]
+; CHECK-NEXT:    br i1 [[COND]], label [[EXIT:%.*]], label [[LOOP]]
+; CHECK:       exit:
+; CHECK-NEXT:    ret void
+;
+loop.ph:
+  br label %loop
+
+loop:
+  %iv = phi i64 [ %inc, %for.inc ], [ 0, %loop.ph ]
+  %cmp = icmp ult i64 %iv, 10
+  br i1 %cmp, label %if.then, label %if.else
+
+if.then:
+  %src.arrayidx = getelementptr inbounds i64, ptr %src, i64 %iv
+  %val = load i64, ptr %src.arrayidx
+  %dst.arrayidx = getelementptr inbounds i64, ptr %dst, i64 %iv
+  store i64 %val, ptr %dst.arrayidx
+  br label %for.inc
+
+if.else:
+  br label %for.inc
+
+for.inc:
+  %inc = add nuw nsw i64 %iv, 1
+  %cond = icmp sgt i64 %inc, %n
+  br i1 %cond, label %exit, label %loop
+
+exit:
+  ret void
+}
+
+; Decline: the loop has two exiting blocks (the early-exit check and the latch),
+; so L.getExitingBlock() is null and the bound math cannot be formed.
+define void @no_split_multiple_exits(ptr noalias %src, ptr noalias %dst, i64 %n) {
+; CHECK-LABEL: @no_split_multiple_exits(
+; CHECK-NEXT:  loop.ph:
+; CHECK-NEXT:    br label [[LOOP:%.*]]
+; CHECK:       loop:
+; CHECK-NEXT:    [[IV:%.*]] = phi i64 [ [[INC:%.*]], [[FOR_INC:%.*]] ], [ 0, [[LOOP_PH:%.*]] ]
+; CHECK-NEXT:    [[EARLY:%.*]] = icmp eq i64 [[IV]], 5
+; CHECK-NEXT:    br i1 [[EARLY]], label [[EXIT:%.*]], label [[BODY:%.*]]
+; CHECK:       body:
+; CHECK-NEXT:    [[CMP:%.*]] = icmp ult i64 [[IV]], 10
+; CHECK-NEXT:    br i1 [[CMP]], label [[IF_THEN:%.*]], label [[IF_ELSE:%.*]]
+; CHECK:       if.then:
+; CHECK-NEXT:    [[SRC_ARRAYIDX:%.*]] = getelementptr inbounds i64, ptr [[SRC:%.*]], i64 [[IV]]
+; CHECK-NEXT:    [[VAL:%.*]] = load i64, ptr [[SRC_ARRAYIDX]], align 4
+; CHECK-NEXT:    [[DST_ARRAYIDX:%.*]] = getelementptr inbounds i64, ptr [[DST:%.*]], i64 [[IV]]
+; CHECK-NEXT:    store i64 [[VAL]], ptr [[DST_ARRAYIDX]], align 4
+; CHECK-NEXT:    br label [[FOR_INC]]
+; CHECK:       if.else:
+; CHECK-NEXT:    br label [[FOR_INC]]
+; CHECK:       for.inc:
+; CHECK-NEXT:    [[INC]] = add nuw nsw i64 [[IV]], 1
+; CHECK-NEXT:    [[COND:%.*]] = icmp sgt i64 [[INC]], [[N:%.*]]
+; CHECK-NEXT:    br i1 [[COND]], label [[EXIT]], label [[LOOP]]
+; CHECK:       exit:
+; CHECK-NEXT:    ret void
+;
+loop.ph:
+  br label %loop
+
+loop:
+  %iv = phi i64 [ %inc, %for.inc ], [ 0, %loop.ph ]
+  %early = icmp eq i64 %iv, 5
+  br i1 %early, label %exit, label %body
+
+body:
+  %cmp = icmp ult i64 %iv, 10
+  br i1 %cmp, label %if.then, label %if.else
+
+if.then:
+  %src.arrayidx = getelementptr inbounds i64, ptr %src, i64 %iv
+  %val = load i64, ptr %src.arrayidx
+  %dst.arrayidx = getelementptr inbounds i64, ptr %dst, i64 %iv
+  store i64 %val, ptr %dst.arrayidx
+  br label %for.inc
+
+if.else:
+  br label %for.inc
+
+for.inc:
+  %inc = add nuw nsw i64 %iv, 1
+  %cond = icmp sgt i64 %inc, %n
+  br i1 %cond, label %exit, label %loop
+
+exit:
+  ret void
+}
+
+; Decline: the in-body condition is (iv ^ 7) < 10, which is not an affine
+; function of the induction variable, so findSplitCandidate finds no candidate.
+define void @no_split_non_affine_cond(ptr noalias %src, ptr noalias %dst, i64 %n) {
+; CHECK-LABEL: @no_split_non_affine_cond(
+; CHECK-NEXT:  loop.ph:
+; CHECK-NEXT:    br label [[LOOP:%.*]]
+; CHECK:       loop:
+; CHECK-NEXT:    [[IV:%.*]] = phi i64 [ [[INC:%.*]], [[FOR_INC:%.*]] ], [ 0, [[LOOP_PH:%.*]] ]
+; CHECK-NEXT:    [[XOR:%.*]] = xor i64 [[IV]], 7
+; CHECK-NEXT:    [[CMP:%.*]] = icmp ult i64 [[XOR]], 10
+; CHECK-NEXT:    br i1 [[CMP]], label [[IF_THEN:%.*]], label [[IF_ELSE:%.*]]
+; CHECK:       if.then:
+; CHECK-NEXT:    [[SRC_ARRAYIDX:%.*]] = getelementptr inbounds i64, ptr [[SRC:%.*]], i64 [[IV]]
+; CHECK-NEXT:    [[VAL:%.*]] = load i64, ptr [[SRC_ARRAYIDX]], align 4
+; CHECK-NEXT:    [[DST_ARRAYIDX:%.*]] = getelementptr inbounds i64, ptr [[DST:%.*]], i64 [[IV]]
+; CHECK-NEXT:    store i64 [[VAL]], ptr [[DST_ARRAYIDX]], align 4
+; CHECK-NEXT:    br label [[FOR_INC]]
+; CHECK:       if.else:
+; CHECK-NEXT:    br label [[FOR_INC]]
+; CHECK:       for.inc:
+; CHECK-NEXT:    [[INC]] = add nuw nsw i64 [[IV]], 1
+; CHECK-NEXT:    [[COND:%.*]] = icmp sgt i64 [[INC]], [[N:%.*]]
+; CHECK-NEXT:    br i1 [[COND]], label [[EXIT:%.*]], label [[LOOP]]
+; CHECK:       exit:
+; CHECK-NEXT:    ret void
+;
+loop.ph:
+  br label %loop
+
+loop:
+  %iv = phi i64 [ %inc, %for.inc ], [ 0, %loop.ph ]
+  %xor = xor i64 %iv, 7
+  %cmp = icmp ult i64 %xor, 10
+  br i1 %cmp, label %if.then, label %if.else
+
+if.then:
+  %src.arrayidx = getelementptr inbounds i64, ptr %src, i64 %iv
+  %val = load i64, ptr %src.arrayidx
+  %dst.arrayidx = getelementptr inbounds i64, ptr %dst, i64 %iv
+  store i64 %val, ptr %dst.arrayidx
+  br label %for.inc
+
+if.else:
+  br label %for.inc
+
+for.inc:
+  %inc = add nuw nsw i64 %iv, 1
+  %cond = icmp sgt i64 %inc, %n
+  br i1 %cond, label %exit, label %loop
+
+exit:
+  ret void
+}
+
+; Decline: the loop carrying the splittable condition is not innermost (it
+; contains an inner loop), and the pass only operates on innermost loops.
+define void @no_split_not_innermost(ptr noalias %src, ptr noalias %dst, i64 %n) {
+; CHECK-LABEL: @no_split_not_innermost(
+; CHECK-NEXT:  outer.ph:
+; CHECK-NEXT:    br label [[OUTER:%.*]]
+; CHECK:       outer:
+; CHECK-NEXT:    [[IV:%.*]] = phi i64 [ [[INC:%.*]], [[OUTER_INC:%.*]] ], [ 0, [[OUTER_PH:%.*]] ]
+; CHECK-NEXT:    [[CMP:%.*]] = icmp ult i64 [[IV]], 10
+; CHECK-NEXT:    br i1 [[CMP]], label [[IF_THEN:%.*]], label [[INNER_PH:%.*]]
+; CHECK:       if.then:
+; CHECK-NEXT:    [[SRC_ARRAYIDX:%.*]] = getelementptr inbounds i64, ptr [[SRC:%.*]], i64 [[IV]]
+; CHECK-NEXT:    [[VAL:%.*]] = load i64, ptr [[SRC_ARRAYIDX]], align 4
+; CHECK-NEXT:    [[DST_ARRAYIDX:%.*]] = getelementptr inbounds i64, ptr [[DST:%.*]], i64 [[IV]]
+; CHECK-NEXT:    store i64 [[VAL]], ptr [[DST_ARRAYIDX]], align 4
+; CHECK-NEXT:    br label [[INNER_PH]]
+; CHECK:       inner.ph:
+; CHECK-NEXT:    br label [[INNER:%.*]]
+; CHECK:       inner:
+; CHECK-NEXT:    [[J:%.*]] = phi i64 [ 0, [[INNER_PH]] ], [ [[JINC:%.*]], [[INNER]] ]
+; CHECK-NEXT:    [[JINC]] = add nuw nsw i64 [[J]], 1
+; CHECK-NEXT:    [[JCOND:%.*]] = icmp slt i64 [[JINC]], [[N:%.*]]
+; CHECK-NEXT:    br i1 [[JCOND]], label [[INNER]], label [[OUTER_INC]]
+; CHECK:       outer.inc:
+; CHECK-NEXT:    [[INC]] = add nuw nsw i64 [[IV]], 1
+; CHECK-NEXT:    [[COND:%.*]] = icmp sgt i64 [[INC]], [[N]]
+; CHECK-NEXT:    br i1 [[COND]], label [[EXIT:%.*]], label [[OUTER]]
+; CHECK:       exit:
+; CHECK-NEXT:    ret void
+;
+outer.ph:
+  br label %outer
+
+outer:
+  %iv = phi i64 [ %inc, %outer.inc ], [ 0, %outer.ph ]
+  %cmp = icmp ult i64 %iv, 10
+  br i1 %cmp, label %if.then, label %inner.ph
+
+if.then:
+  %src.arrayidx = getelementptr inbounds i64, ptr %src, i64 %iv
+  %val = load i64, ptr %src.arrayidx
+  %dst.arrayidx = getelementptr inbounds i64, ptr %dst, i64 %iv
+  store i64 %val, ptr %dst.arrayidx
+  br label %inner.ph
+
+inner.ph:
+  br label %inner
+
+inner:
+  %j = phi i64 [ 0, %inner.ph ], [ %jinc, %inner ]
+  %jinc = add nuw nsw i64 %j, 1
+  %jcond = icmp slt i64 %jinc, %n
+  br i1 %jcond, label %inner, label %outer.inc
+
+outer.inc:
+  %inc = add nuw nsw i64 %iv, 1
+  %cond = icmp sgt i64 %inc, %n
+  br i1 %cond, label %exit, label %outer
+
+exit:
+  ret void
+}
+
+attributes #0 = { optsize }
+
 declare i64 @llvm.umax.i64(i64, i64)
