@@ -8,6 +8,7 @@
 
 #include "llvm/Transforms/Scalar/LoopBoundSplit.h"
 #include "llvm/ADT/Sequence.h"
+#include "llvm/ADT/Statistic.h"
 #include "llvm/Analysis/LoopAnalysisManager.h"
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/Analysis/ScalarEvolution.h"
@@ -20,6 +21,8 @@
 #include "llvm/Transforms/Utils/ScalarEvolutionExpander.h"
 
 #define DEBUG_TYPE "loop-bound-split"
+
+STATISTIC(NumLoopBoundSplit, "Number of loops whose bounds were split");
 
 using namespace llvm;
 using namespace PatternMatch;
@@ -477,6 +480,7 @@ static bool splitLoopBound(Loop &L, DominatorTree &DT, LoopInfo &LI,
   // Add new post-loop to loop pass manager.
   U.addSiblingLoops(PostLoop);
 
+  ++NumLoopBoundSplit;
   return true;
 }
 
