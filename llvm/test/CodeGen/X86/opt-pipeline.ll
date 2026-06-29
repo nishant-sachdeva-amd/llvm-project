@@ -207,6 +207,7 @@
 ; CHECK-NEXT:       X86 Fixup Inst Tuning
 ; CHECK-NEXT:       X86 Fixup Vector Constants
 ; CHECK-NEXT:       Compressing EVEX instrs when possible
+; CHECK-NEXT:       Promoting VEX vector moves to EVEX to reduce code size
 ; CHECK-NEXT:       X86 insert wait instruction
 ; CHECK-NEXT:       Contiguously Lay Out Funclets
 ; CHECK-NEXT:       Remove Loads Into Fake Uses

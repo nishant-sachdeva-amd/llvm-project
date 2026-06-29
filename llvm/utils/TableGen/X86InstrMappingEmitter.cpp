@@ -14,6 +14,7 @@
 #include "Common/CodeGenInstruction.h"
 #include "Common/CodeGenTarget.h"
 #include "X86RecognizableInstr.h"
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/TableGen/Error.h"
 #include "llvm/TableGen/Record.h"
 #include "llvm/TableGen/TableGenBackend.h"
@@ -259,6 +260,83 @@ void X86InstrMappingEmitter::emitCompressEVEXTable(
     for (const auto &Inst : Val)
       OS << "  case X86::" << Inst->getName() << ":\n";
     OS << "    return " << Key << ";\n";
+  }
+  OS << "  }\n";
+  OS << "}\n\n";
+  printMacroEnd(Macro, OS);
+
+  // Prints a function that tests whether the *EVEX* promotion target is
+  // available on the subtarget. Promotion (VEX->EVEX, in X86PromoteEVEXForSize)
+  // is uphill in features: hasVLX() does not imply DQ/BW/VNNI/IFMA, so the EVEX
+  // twin may need a feature the VEX source did not. This is the
+  // inverse-direction analog of checkPredicate above (which tests the VEX form
+  // and is therefore insufficient for promotion). We emit, per EVEX opcode, the
+  // conjunction of its .td Predicates as direct X86Subtarget queries.
+  //
+  // A predicate is gated on iff it is a pure subtarget-feature/mode query, i.e.
+  // its CondString is exactly "Subtarget->someQuery()" with no operators. Such a
+  // predicate genuinely constrains when the EVEX form is legal, so conjoining it
+  // is always correct (at worst over-conservative). Compound or non-subtarget
+  // predicates need human judgment: ignore the known isel-only heuristics,
+  // report_fatal_error on anything else so a future ISA-extension row cannot
+  // silently slip an unguarded opcode through.
+  auto isSimpleSubtargetQuery = [](StringRef C) {
+    if (!C.consume_front("Subtarget->") || !C.consume_back("()") || C.empty())
+      return false;
+    return llvm::all_of(C, [](char Ch) {
+      return llvm::isAlnum(Ch) || Ch == '_';
+    });
+  };
+  // Heuristic/selection predicates that do not affect encoding legality (they
+  // pick between equivalent forms during isel). At the promotion stage the
+  // instruction already exists, so these are irrelevant and ignored.
+  static const std::set<StringRef> IgnoredPreds = {"OptForSize", "OptForMinSize",
+                                                   "NoOptForSize"};
+  printMacroBegin(Macro, OS);
+  OS << "static bool featuresAvailableForPromote(unsigned EVEXOpc, "
+        "const X86Subtarget *Subtarget) {\n"
+     << "  switch (EVEXOpc) {\n"
+     << "  default: return false;\n";
+  for (const auto &Pair : Table) {
+    const CodeGenInstruction *EVEXInst = Pair.first;
+    const CodeGenInstruction *VEXInst = Pair.second;
+    // Only emit a gate for rows X86PromoteEVEXForSize can actually promote:
+    // a VEX-encoded target and a CDisp8-capable, non-broadcast EVEX source.
+    // This excludes legacy/GPR EVEX-space rows (e.g. RAO-INT atomics) whose
+    // predicates are outside the AVX512 vector vocabulary and which are never
+    // promotion targets anyway.
+    RecognizableInstrBase OldRI(*EVEXInst);
+    RecognizableInstrBase NewRI(*VEXInst);
+    if (NewRI.Encoding != X86Local::VEX || OldRI.Encoding != X86Local::EVEX ||
+        OldRI.CD8_Scale == 0 || OldRI.HasEVEX_B)
+      continue;
+    // Promotion only applies to memory-operand forms (the disp8*N win); reg-only
+    // forms are never promoted and may carry non-feature predicates.
+    if (llvm::none_of(EVEXInst->Operands,
+                      [](const auto &Op) { return isMemoryOperand(Op.Rec); }))
+      continue;
+    std::string Cond;
+    for (const Record *P :
+         EVEXInst->TheDef->getValueAsListOfDefs("Predicates")) {
+      StringRef PName = P->getName();
+      if (IgnoredPreds.count(PName))
+        continue;
+      StringRef CondStr = P->getValueAsString("CondString");
+      if (!isSimpleSubtargetQuery(CondStr))
+        report_fatal_error(
+            "X86InstrMappingEmitter: EVEX promotion target " +
+            EVEXInst->getName() + " has unhandled predicate " + PName + " (\"" +
+            CondStr +
+            "\"); if it is a pure subtarget feature query it should already be "
+            "accepted, otherwise add it to IgnoredPreds (isel-only heuristic) "
+            "or handle it explicitly.");
+      if (!Cond.empty())
+        Cond += " && ";
+      Cond += CondStr.str();
+    }
+    if (Cond.empty())
+      Cond = "true";
+    OS << "  case X86::" << EVEXInst->getName() << ": return " << Cond << ";\n";
   }
   OS << "  }\n";
   OS << "}\n\n";
